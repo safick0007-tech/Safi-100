@@ -1,21 +1,25 @@
 workflows:
   android-debug-apk:
     name: GodMode Studio · Debug APK (Ready to Install)
-    max_build_duration: 45
-    instance_type: linux_x2
+    max_build_duration: 60
+    instance_type: mac_mini_m2
     environment:
       java: 21
     scripts:
       - name: Prepare Android SDK (API 36) & local.properties
         script: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || true
+          SDK_DIR="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "sdk.dir=$SDK_DIR" > "$CM_BUILD_DIR/local.properties"
+          SDKMANAGER=$(command -v sdkmanager || echo "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager")
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses || true
+            "$SDKMANAGER" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || true
+          fi
 
       - name: Prepare debug.keystore
         script: |
           if [ -f "$CM_BUILD_DIR/debug.keystore.base64" ]; then
-            base64 -d "$CM_BUILD_DIR/debug.keystore.base64" > "$CM_BUILD_DIR/debug.keystore"
+            python3 -c "import base64, pathlib; p = pathlib.Path('$CM_BUILD_DIR/debug.keystore.base64').read_text().strip(); pathlib.Path('$CM_BUILD_DIR/debug.keystore').write_bytes(base64.b64decode(p))"
           elif [ ! -f "$CM_BUILD_DIR/debug.keystore" ]; then
             keytool -genkey -v \
               -keystore "$CM_BUILD_DIR/debug.keystore" \
@@ -43,8 +47,8 @@ workflows:
 
   android-release-apk-aab:
     name: GodMode Studio · Release APK & AAB (Play Store)
-    max_build_duration: 45
-    instance_type: linux_x2
+    max_build_duration: 60
+    instance_type: mac_mini_m2
     environment:
       java: 21
       groups:
@@ -54,15 +58,18 @@ workflows:
     scripts:
       - name: Prepare Android SDK (API 36) & local.properties
         script: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || true
+          SDK_DIR="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "sdk.dir=$SDK_DIR" > "$CM_BUILD_DIR/local.properties"
+          SDKMANAGER=$(command -v sdkmanager || echo "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager")
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses || true
+            "$SDKMANAGER" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || true
+          fi
 
       - name: Prepare Release Keystore
         script: |
           if [ -n "${KEYSTORE_BASE64:-}" ]; then
-            echo "$KEYSTORE_BASE64" | base64 --decode > "$CM_BUILD_DIR/my-upload-key.jks"
-            export KEYSTORE_PATH="$CM_BUILD_DIR/my-upload-key.jks"
+            python3 -c "import base64, os, pathlib; pathlib.Path('$CM_BUILD_DIR/my-upload-key.jks').write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'].strip()))"
           else
             echo "KEYSTORE_BASE64 is not set in Codemagic environment group keystore_credentials."
             exit 1
