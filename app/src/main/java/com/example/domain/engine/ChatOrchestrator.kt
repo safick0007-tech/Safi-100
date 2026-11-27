@@ -544,6 +544,18 @@ class ChatOrchestrator(
         settings: StudioSettings,
         provider: ProviderSource
     ): List<RacerBlueprint> {
+        if (provider == ProviderSource.BUILTIN_GEMINI && !FirebaseGeminiProvider.isFirebaseInitialized()) {
+            return listOf(
+                RacerBlueprint(
+                    label = "Free Open AI · Direct",
+                    modelId = FirebaseGeminiProvider.MODEL_FLASH,
+                    provider = ProviderSource.BUILTIN_GEMINI,
+                    personaTag = "Standalone Free Mode",
+                    systemDirective = "Provide a clear, helpful, accurate answer directly in the user's language.",
+                    tempDelta = 0f
+                )
+            )
+        }
         if (settings.activeMode == ChatMode.CLASSIC) {
             val chosen = if (settings.classicFullCombo) {
                 CLASSIC_PERSONAS

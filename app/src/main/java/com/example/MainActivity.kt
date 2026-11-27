@@ -49,7 +49,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ai.configureAppCheck
-import com.example.domain.model.VideoClipRecord
 import com.example.ui.components.ChatHeader
 import com.example.ui.components.ChatInputBar
 import com.example.ui.components.DisclaimerDialog
@@ -57,21 +56,16 @@ import com.example.ui.components.MessageBubbleItem
 import com.example.ui.components.SettingsDialog
 import com.example.ui.components.SidebarDrawerContent
 import com.example.ui.components.StrategyLogsDialog
-import com.example.ui.components.VideoPlaybackModal
-import com.example.ui.components.VideoStudioModal
 import com.example.ui.components.WaitingGamesDialog
 import com.example.ui.components.WelcomeView
 import com.example.ui.theme.GodModeStudioTheme
 import com.example.ui.theme.LocalStudioPalette
 import com.example.ui.viewmodel.ChatUiState
 import com.example.ui.viewmodel.ChatViewModel
-import com.example.ui.viewmodel.VideoStudioState
-import com.example.ui.viewmodel.VideoStudioViewModel
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: ChatViewModel by viewModels()
-    private val videoViewModel: VideoStudioViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,7 +78,6 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-            val videoState by videoViewModel.uiState.collectAsStateWithLifecycle()
 
             GodModeStudioTheme(
                 themePreset = uiState.settings.themePreset,
@@ -92,9 +85,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 GodModeStudioApp(
                     uiState = uiState,
-                    viewModel = viewModel,
-                    videoState = videoState,
-                    videoViewModel = videoViewModel
+                    viewModel = viewModel
                 )
             }
         }
@@ -104,17 +95,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun GodModeStudioApp(
     uiState: ChatUiState,
-    viewModel: ChatViewModel,
-    videoState: VideoStudioState,
-    videoViewModel: VideoStudioViewModel
+    viewModel: ChatViewModel
 ) {
     val palette = LocalStudioPalette.current
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var inputText by rememberSaveable { mutableStateOf("") }
-    var showVideoStudio by rememberSaveable { mutableStateOf(false) }
-    var pendingExportClip by remember { mutableStateOf<VideoClipRecord?>(null) }
+    var pendingSaveImagePath by remember { mutableStateOf<String?>(null) }
 
     // Zero-permission Android Photo Picker (Play Policy compliant)
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -138,39 +126,18 @@ private fun GodModeStudioApp(
         if (uri != null) viewModel.importBackupFromUri(uri)
     }
 
-    // Zero-permission Photo Picker for Image-to-Video starting image
-    val videoImageLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
+    val saveImageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("image/png")
     ) { uri ->
-        if (uri != null) videoViewModel.setSourceImageUri(uri)
-    }
-
-    // Zero-permission Photo Picker for Select Last Frame From Video
-    val deviceVideoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) videoViewModel.selectLastFrameFromDeviceVideo(uri)
-    }
-
-    // SAF MP4 export launcher
-    val exportMp4Launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("video/mp4")
-    ) { uri ->
-        val clip = pendingExportClip
-        pendingExportClip = null
-        if (uri != null && clip != null) {
-            videoViewModel.exportClipToUri(clip, uri)
+        val srcPath = pendingSaveImagePath
+        pendingSaveImagePath = null
+        if (uri != null && !srcPath.isNullOrBlank()) {
+            viewModel.saveGeneratedImageToUri(srcPath, uri)
         }
     }
 
     LaunchedEffect(Unit) {
         viewModel.snackbarEvents.collect { msg ->
-            snackbarHostState.showSnackbar(msg)
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        videoViewModel.events.collect { msg ->
             snackbarHostState.showSnackbar(msg)
         }
     }
@@ -243,10 +210,9 @@ private fun GodModeStudioApp(
                 onEditAndResend = viewModel::editAndResendUserMessage,
                 onSelectRaceIndex = viewModel::selectRaceCandidate,
                 onSelectLiquidIndex = viewModel::selectLiquidVersion,
-                videoCount = videoState.clips.size,
-                onOpenVideoStudio = {
-                    videoViewModel.seedPromptFromChat(inputText)
-                    showVideoStudio = true
+                onSaveImage = { path ->
+                    pendingSaveImagePath = path
+                    saveImageLauncher.launch("godmode-photo-${System.currentTimeMillis()}.png")
                 }
             )
         }
@@ -322,60 +288,6 @@ private fun GodModeStudioApp(
             onDismiss = { viewModel.toggleWaitingGame(false) }
         )
     }
-
-    // Free Video Studio Modal (5 Free Models, 16:9 & 9:16, 5s-15s, Extend Video & History)
-    if (showVideoStudio) {
-        VideoStudioModal(
-            state = videoState,
-            onSelectTab = videoViewModel::selectTab,
-            onModeChange = videoViewModel::setMode,
-            onPromptChange = videoViewModel::setPrompt,
-            onModelChange = videoViewModel::setModel,
-            onRatioChange = videoViewModel::setRatio,
-            onDurationChange = videoViewModel::setDurationSec,
-            onCameraMotionChange = videoViewModel::setCameraMotion,
-            onPickSourceImage = {
-                videoImageLauncher.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                )
-            },
-            onClearSourceImage = { videoViewModel.setSourceImageUri(null) },
-            onPickDeviceVideoForLastFrame = {
-                deviceVideoLauncher.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                )
-            },
-            onClearExtendAnchor = videoViewModel::clearExtendAnchor,
-            onSelectLastFrameFromHistory = videoViewModel::selectLastFrameFromHistory,
-            onFilterChange = videoViewModel::setFilter,
-            onGenerate = videoViewModel::generateVideo,
-            onStop = videoViewModel::stopGeneration,
-            onPlayClip = { clip -> videoViewModel.openPlayer(clip) },
-            onExportClip = { clip ->
-                pendingExportClip = clip
-                exportMp4Launcher.launch("godmode-video-${clip.totalDurationSec}s.mp4")
-            },
-            onDeleteClip = videoViewModel::deleteClip,
-            onDismiss = { showVideoStudio = false }
-        )
-    }
-
-    // In-App MP4 Video Player Modal
-    val playingClip = videoState.playingClip
-    if (playingClip != null) {
-        VideoPlaybackModal(
-            clip = playingClip,
-            onExtendFromLastFrame = { clip ->
-                videoViewModel.selectLastFrameFromHistory(clip)
-                showVideoStudio = true
-            },
-            onSaveMp4 = { clip ->
-                pendingExportClip = clip
-                exportMp4Launcher.launch("godmode-video-${clip.totalDurationSec}s.mp4")
-            },
-            onDismiss = { videoViewModel.openPlayer(null) }
-        )
-    }
 }
 
 @Composable
@@ -400,8 +312,7 @@ private fun ChatWorkspacePane(
     onEditAndResend: (com.example.domain.model.ChatMessage, String) -> Unit,
     onSelectRaceIndex: (String, Int) -> Unit,
     onSelectLiquidIndex: (String, Int) -> Unit,
-    videoCount: Int,
-    onOpenVideoStudio: () -> Unit
+    onSaveImage: (String) -> Unit
 ) {
     val palette = LocalStudioPalette.current
     val listState = rememberLazyListState()
@@ -441,9 +352,7 @@ private fun ChatWorkspacePane(
                 isGenerating = uiState.isGenerating,
                 settings = uiState.settings,
                 onSend = onSend,
-                onStop = onStop,
-                videoCount = videoCount,
-                onOpenVideoStudio = onOpenVideoStudio
+                onStop = onStop
             )
         }
     ) { innerPadding ->
@@ -474,7 +383,8 @@ private fun ChatWorkspacePane(
                             onRetry = onRetry,
                             onEditAndResend = onEditAndResend,
                             onSelectRaceIndex = onSelectRaceIndex,
-                            onSelectLiquidIndex = onSelectLiquidIndex
+                            onSelectLiquidIndex = onSelectLiquidIndex,
+                            onSaveImage = onSaveImage
                         )
                     }
                 }

@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ai.ChatImageGenerator
 import com.example.data.local.AppDatabase
 import com.example.data.local.SettingsDataStore
 import com.example.data.local.StudioRepository
@@ -14,6 +15,7 @@ import com.example.domain.engine.ChatOrchestrator
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.ChatMode
 import com.example.domain.model.Conversation
+import com.example.domain.model.MagicMetadata
 import com.example.domain.model.ModelParameters
 import com.example.domain.model.StrategyLogEntry
 import com.example.domain.model.StudioSettings
@@ -34,6 +36,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.UUID
 
 data class ChatUiState(
@@ -61,6 +64,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsStore = SettingsDataStore(application)
     private val openAiClient = OpenAiCompatibleClient()
     private val orchestrator = ChatOrchestrator(openAiClient)
+    private val imageGenerator = ChatImageGenerator(application)
 
     private val _activeConversationId = MutableStateFlow<String?>(null)
     private val _streamingMessage = MutableStateFlow<ChatMessage?>(null)
@@ -294,61 +298,119 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                 val bitmap = imageUri?.let { loadScaledBitmap(it) }
 
-                val finalResult = orchestrator.execute(
-                    prompt = userMessage.content,
-                    history = existingHistory,
-                    settings = settings,
-                    attachedBitmap = bitmap
-                ) { update ->
-                    _activeStatus.value = update.statusText
-                    _streamingMessage.value = ChatMessage(
+                if (ChatImageGenerator.isImageGenerationRequest(userMessage.content)) {
+                    val generated = imageGenerator.generateImage(
+                        userPrompt = userMessage.content,
+                        attachedBitmap = bitmap
+                    ) { status ->
+                        _activeStatus.value = status
+                        _streamingMessage.value = ChatMessage(
+                            id = assistantId,
+                            conversationId = convId,
+                            isUser = false,
+                            content = "",
+                            timestamp = assistantStartTs,
+                            isStreaming = true,
+                            statusText = status
+                        )
+                    }
+
+                    val imageMagic = MagicMetadata(
+                        modeName = "AI Photo Generation",
+                        winnerModel = generated.engineLabel,
+                        totalDurationMs = generated.durationMs,
+                        autoTuneContext = "Visual Synthesis",
+                        processLogs = listOf(
+                            "Detected image generation request",
+                            "Engine: ${generated.engineLabel}",
+                            "Visual prompt: ${generated.resolvedPrompt}"
+                        ),
+                        providerUsed = generated.engineLabel
+                    )
+
+                    val persistedPhotoMsg = ChatMessage(
                         id = assistantId,
                         conversationId = convId,
                         isUser = false,
-                        content = update.content,
+                        content = "Generated photo for: **${userMessage.content}**",
+                        imageUri = generated.filePath,
                         timestamp = assistantStartTs,
-                        isStreaming = !update.isFinal,
-                        statusText = update.statusText,
-                        raceCandidates = update.raceCandidates,
-                        activeRaceIndex = update.activeRaceIndex,
-                        liquidVersions = update.liquidVersions,
-                        activeLiquidIndex = update.activeLiquidIndex,
-                        magic = update.magic,
-                        isError = update.isError
+                        isStreaming = false,
+                        statusText = null,
+                        magic = imageMagic,
+                        isError = false
                     )
-                }
-
-                val persistedAssistant = ChatMessage(
-                    id = assistantId,
-                    conversationId = convId,
-                    isUser = false,
-                    content = finalResult.content,
-                    timestamp = assistantStartTs,
-                    isStreaming = false,
-                    statusText = null,
-                    raceCandidates = finalResult.raceCandidates,
-                    activeRaceIndex = finalResult.activeRaceIndex,
-                    liquidVersions = finalResult.liquidVersions,
-                    activeLiquidIndex = finalResult.activeLiquidIndex,
-                    magic = finalResult.magic,
-                    isError = finalResult.isError
-                )
-                repository.saveMessage(persistedAssistant)
-
-                if (!finalResult.isError && finalResult.magic != null) {
+                    repository.saveMessage(persistedPhotoMsg)
                     repository.addStrategyLog(
                         StrategyLogEntry(
                             id = UUID.randomUUID().toString(),
                             timestamp = System.currentTimeMillis(),
                             promptPreview = userMessage.content.take(70),
-                            modeName = finalResult.magic.modeName,
-                            winnerModel = finalResult.magic.winnerModel,
-                            score = finalResult.magic.score?.totalScore ?: 0,
-                            durationMs = finalResult.magic.totalDurationMs,
-                            candidatesCount = finalResult.raceCandidates.size.coerceAtLeast(1),
-                            liquidApplied = finalResult.liquidVersions.size > 1
+                            modeName = "AI Photo",
+                            winnerModel = generated.engineLabel,
+                            score = 95,
+                            durationMs = generated.durationMs,
+                            candidatesCount = 1,
+                            liquidApplied = false
                         )
                     )
+                } else {
+                    val finalResult = orchestrator.execute(
+                        prompt = userMessage.content,
+                        history = existingHistory,
+                        settings = settings,
+                        attachedBitmap = bitmap
+                    ) { update ->
+                        _activeStatus.value = update.statusText
+                        _streamingMessage.value = ChatMessage(
+                            id = assistantId,
+                            conversationId = convId,
+                            isUser = false,
+                            content = update.content,
+                            timestamp = assistantStartTs,
+                            isStreaming = !update.isFinal,
+                            statusText = update.statusText,
+                            raceCandidates = update.raceCandidates,
+                            activeRaceIndex = update.activeRaceIndex,
+                            liquidVersions = update.liquidVersions,
+                            activeLiquidIndex = update.activeLiquidIndex,
+                            magic = update.magic,
+                            isError = update.isError
+                        )
+                    }
+
+                    val persistedAssistant = ChatMessage(
+                        id = assistantId,
+                        conversationId = convId,
+                        isUser = false,
+                        content = finalResult.content,
+                        timestamp = assistantStartTs,
+                        isStreaming = false,
+                        statusText = null,
+                        raceCandidates = finalResult.raceCandidates,
+                        activeRaceIndex = finalResult.activeRaceIndex,
+                        liquidVersions = finalResult.liquidVersions,
+                        activeLiquidIndex = finalResult.activeLiquidIndex,
+                        magic = finalResult.magic,
+                        isError = finalResult.isError
+                    )
+                    repository.saveMessage(persistedAssistant)
+
+                    if (!finalResult.isError && finalResult.magic != null) {
+                        repository.addStrategyLog(
+                            StrategyLogEntry(
+                                id = UUID.randomUUID().toString(),
+                                timestamp = System.currentTimeMillis(),
+                                promptPreview = userMessage.content.take(70),
+                                modeName = finalResult.magic.modeName,
+                                winnerModel = finalResult.magic.winnerModel,
+                                score = finalResult.magic.score?.totalScore ?: 0,
+                                durationMs = finalResult.magic.totalDurationMs,
+                                candidatesCount = finalResult.raceCandidates.size.coerceAtLeast(1),
+                                liquidApplied = finalResult.liquidVersions.size > 1
+                            )
+                        )
+                    }
                 }
             } catch (e: CancellationException) {
                 val partial = _streamingMessage.value
@@ -491,6 +553,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _snackbarEvents.tryEmit("Imported $convs chats and $msgs messages")
             }.onFailure {
                 _snackbarEvents.tryEmit("Import failed: ${it.localizedMessage}")
+            }
+        }
+    }
+
+    fun saveGeneratedImageToUri(sourcePath: String, destUri: Uri) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val src = File(sourcePath)
+                    if (!src.exists()) error("Photo file not found")
+                    getApplication<Application>().contentResolver.openOutputStream(destUri)?.use { out ->
+                        src.inputStream().use { it.copyTo(out) }
+                    } ?: error("Cannot open destination file")
+                }
+            }
+            result.onSuccess {
+                _snackbarEvents.tryEmit("Photo saved successfully")
+            }.onFailure {
+                _snackbarEvents.tryEmit("Save failed: ${it.localizedMessage}")
             }
         }
     }

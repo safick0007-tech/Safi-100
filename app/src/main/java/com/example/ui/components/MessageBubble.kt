@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -68,6 +70,7 @@ import com.example.domain.model.TastemakerScore
 import com.example.ui.theme.JetBrainsMono
 import com.example.ui.theme.LocalStudioPalette
 import kotlinx.coroutines.delay
+import java.io.File
 
 @Composable
 fun MessageBubbleItem(
@@ -77,6 +80,7 @@ fun MessageBubbleItem(
     onEditAndResend: (ChatMessage, String) -> Unit,
     onSelectRaceIndex: (String, Int) -> Unit,
     onSelectLiquidIndex: (String, Int) -> Unit,
+    onSaveImage: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (message.isUser) {
@@ -93,6 +97,7 @@ fun MessageBubbleItem(
             onRetry = onRetry,
             onSelectRaceIndex = onSelectRaceIndex,
             onSelectLiquidIndex = onSelectLiquidIndex,
+            onSaveImage = onSaveImage,
             modifier = modifier
         )
     }
@@ -246,6 +251,7 @@ private fun AssistantMessageBubble(
     onRetry: (ChatMessage) -> Unit,
     onSelectRaceIndex: (String, Int) -> Unit,
     onSelectLiquidIndex: (String, Int) -> Unit,
+    onSaveImage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalStudioPalette.current
@@ -368,6 +374,25 @@ private fun AssistantMessageBubble(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            // Generated AI Photo Preview (if this assistant message produced an image)
+            val generatedPath = message.imageUri
+            if (!generatedPath.isNullOrBlank()) {
+                val imgModel: Any = if (generatedPath.startsWith("/")) File(generatedPath) else Uri.parse(generatedPath)
+                Spacer(modifier = Modifier.height(12.dp))
+                AsyncImage(
+                    model = imgModel,
+                    contentDescription = "AI generated photo",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 200.dp, max = 380.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(palette.surface)
+                        .border(1.dp, palette.emerald.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+                        .testTag("assistant_generated_image")
+                )
             }
 
             // Main Markdown Content
@@ -521,6 +546,15 @@ private fun AssistantMessageBubble(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (!message.imageUri.isNullOrBlank() && message.imageUri.startsWith("/")) {
+                            SmallActionChip(
+                                icon = Icons.Rounded.Download,
+                                label = "Save Photo",
+                                accent = palette.emerald,
+                                onClick = { onSaveImage(message.imageUri) },
+                                modifier = Modifier.testTag("save_generated_photo_button")
+                            )
+                        }
                         SmallActionChip(
                             icon = if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
                             label = if (copied) stringResource(R.string.action_copied) else stringResource(R.string.action_copy),

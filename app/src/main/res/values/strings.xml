@@ -63,9 +63,4 @@
     <string name="status_liquid">Liquid refining answer…</string>
     <string name="status_streaming">Streaming response…</string>
     <string name="error_generic">Something went wrong. Please retry or check your provider settings.</string>
-
-    <!-- Free Video Studio -->
-    <string name="action_open_video_studio">Open Free Video Studio</string>
-    <string name="video_studio_title">Free Video Studio</string>
-    <string name="video_studio_subtitle">100% Free · No API Key · 24fps MP4</string>
 </resources>

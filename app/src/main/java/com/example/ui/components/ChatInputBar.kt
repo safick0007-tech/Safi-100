@@ -25,7 +25,6 @@ import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.MovieCreation
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,8 +58,6 @@ fun ChatInputBar(
     settings: StudioSettings,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    videoCount: Int = 0,
-    onOpenVideoStudio: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val palette = LocalStudioPalette.current
@@ -161,40 +158,6 @@ fun ChatInputBar(
                                 contentDescription = stringResource(R.string.action_attach_image),
                                 tint = if (attachedImageUri != null) palette.liquid else palette.textSecondary
                             )
-                        }
-
-                        // Free Video Studio Trigger beside Chat Box
-                        IconButton(
-                            onClick = onOpenVideoStudio,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("open_video_studio_button")
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(11.dp))
-                                    .background(palette.emeraldSoft)
-                                    .border(1.dp, palette.emerald.copy(alpha = 0.45f), RoundedCornerShape(11.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.MovieCreation,
-                                    contentDescription = stringResource(R.string.action_open_video_studio),
-                                    tint = palette.emerald,
-                                    modifier = Modifier.size(19.dp)
-                                )
-                                if (videoCount > 0) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .padding(2.dp)
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(palette.liquid)
-                                    )
-                                }
-                            }
                         }
 
                         // Multiline Composer TextField
