@@ -1,0 +1,86 @@
+workflows:
+  android-debug-apk:
+    name: GodMode Studio · Debug APK (Ready to Install)
+    max_build_duration: 45
+    instance_type: linux_x2
+    environment:
+      java: 21
+    scripts:
+      - name: Prepare Android SDK (API 36) & local.properties
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || true
+
+      - name: Prepare debug.keystore
+        script: |
+          if [ -f "$CM_BUILD_DIR/debug.keystore.base64" ]; then
+            base64 -d "$CM_BUILD_DIR/debug.keystore.base64" > "$CM_BUILD_DIR/debug.keystore"
+          elif [ ! -f "$CM_BUILD_DIR/debug.keystore" ]; then
+            keytool -genkey -v \
+              -keystore "$CM_BUILD_DIR/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Install Gradle 9.3.1 & Build Debug APK
+        script: |
+          curl -sSL https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -o /tmp/gradle-9.3.1.zip
+          unzip -q -o /tmp/gradle-9.3.1.zip -d /tmp
+          /tmp/gradle-9.3.1/bin/gradle :app:assembleDebug --no-daemon --stacktrace
+    artifacts:
+      - app/build/outputs/apk/debug/*.apk
+    publishing:
+      email:
+        recipients:
+          - safick0007@gmail.com
+        notify:
+          success: true
+          failure: true
+
+  android-release-apk-aab:
+    name: GodMode Studio · Release APK & AAB (Play Store)
+    max_build_duration: 45
+    instance_type: linux_x2
+    environment:
+      java: 21
+      groups:
+        # Optional: Create a "keystore_credentials" group in Codemagic with:
+        # KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD
+        - keystore_credentials
+    scripts:
+      - name: Prepare Android SDK (API 36) & local.properties
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || true
+
+      - name: Prepare Release Keystore
+        script: |
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$CM_BUILD_DIR/my-upload-key.jks"
+            export KEYSTORE_PATH="$CM_BUILD_DIR/my-upload-key.jks"
+          else
+            echo "KEYSTORE_BASE64 is not set in Codemagic environment group keystore_credentials."
+            exit 1
+          fi
+
+      - name: Install Gradle 9.3.1 & Build Release APK + AAB
+        script: |
+          export KEYSTORE_PATH="$CM_BUILD_DIR/my-upload-key.jks"
+          curl -sSL https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -o /tmp/gradle-9.3.1.zip
+          unzip -q -o /tmp/gradle-9.3.1.zip -d /tmp
+          /tmp/gradle-9.3.1/bin/gradle :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace
+    artifacts:
+      - app/build/outputs/apk/release/*.apk
+      - app/build/outputs/bundle/release/*.aab
+    publishing:
+      email:
+        recipients:
+          - safick0007@gmail.com
+        notify:
+          success: true
+          failure: true
