@@ -1,0 +1,6 @@
+{
+  "name": "GodMode Studio",
+  "description": "Multi-model AI chat workbench with parallel model racing, quality scoring, progressive Liquid refinement, AutoTune parameter optimization, and multi-provider support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,71 @@
+<resources>
+    <string name="app_name">GodMode Studio</string>
+    <string name="app_tagline">Multi-Model AI Workbench</string>
+
+    <!-- Navigation & Actions -->
+    <string name="action_menu">Open conversations menu</string>
+    <string name="action_new_chat">New Chat</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_send">Send message</string>
+    <string name="action_stop">Stop generation</string>
+    <string name="action_attach_image">Attach image</string>
+    <string name="action_remove_image">Remove attached image</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_copied">Copied</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_save">Save</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_play_game">Waiting Mini-Game</string>
+    <string name="action_show_magic">Show Magic</string>
+    <string name="action_hide_magic">Hide Magic</string>
+
+    <!-- Modes -->
+    <string name="mode_ultra">Ultra Arena</string>
+    <string name="mode_ultra_desc">Parallel multi-model race with live quality judging and optional coaching pass</string>
+    <string name="mode_classic">Classic Arena</string>
+    <string name="mode_classic_desc">Races specialized expert personas side-by-side for deep, versatile insights</string>
+    <string name="mode_prompt_lab">Prompt Lab</string>
+    <string name="mode_prompt_lab_desc">Direct streaming single-model workbench with AutoTune parameter control</string>
+
+    <!-- Chat Interface -->
+    <string name="input_placeholder">Ask anything, compare models, or attach an image…</string>
+    <string name="welcome_title">GodMode Studio</string>
+    <string name="welcome_subtitle">Race multiple AI perspectives in parallel, inspect live scoring telemetry, and refine answers with Liquid Mode.</string>
+    <string name="sidebar_chats_title">Conversations</string>
+    <string name="sidebar_search_hint">Search chats…</string>
+    <string name="sidebar_no_chats">No conversations yet. Start a new chat!</string>
+    <string name="sidebar_local_storage">Local Device Storage · Self-Custody</string>
+    <string name="liquid_badge">Liquid</string>
+    <string name="liquid_on">Liquid ON</string>
+    <string name="liquid_off">Liquid OFF</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Studio Settings</string>
+    <string name="tab_general">General</string>
+    <string name="tab_engine">Engine</string>
+    <string name="tab_prompt">Prompt</string>
+    <string name="tab_providers">Providers</string>
+    <string name="tab_data">Data</string>
+
+    <!-- Disclaimer -->
+    <string name="disclaimer_title">Welcome to GodMode Studio</string>
+    <string name="disclaimer_body">Your conversations, logs, and optional API keys stay strictly on your device in local storage. Built-in Gemini models work immediately, and you can optionally connect OpenRouter, Venice, or local Ollama / LM Studio endpoints anytime in Settings.</string>
+    <string name="disclaimer_accept">Start Exploring</string>
+
+    <!-- Status & Errors -->
+    <string name="status_racing">Racing models in parallel…</string>
+    <string name="status_judging">Scoring &amp; ranking responses…</string>
+    <string name="status_coaching">Running AI coaching refinement…</string>
+    <string name="status_liquid">Liquid refining answer…</string>
+    <string name="status_streaming">Streaming response…</string>
+    <string name="error_generic">Something went wrong. Please retry or check your provider settings.</string>
+
+    <!-- Free Video Studio -->
+    <string name="action_open_video_studio">Open Free Video Studio</string>
+    <string name="video_studio_title">Free Video Studio</string>
+    <string name="video_studio_subtitle">100% Free · No API Key · 24fps MP4</string>
+</resources>
