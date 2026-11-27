@@ -3,6 +3,7 @@ package com.example.domain.video
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Base64
 import android.util.Log
 import com.example.domain.model.FreeVideoModel
 import com.example.domain.model.VideoCameraMotion
@@ -11,6 +12,7 @@ import com.example.domain.model.VideoRatio
 import com.example.domain.model.VideoRenderProgress
 import com.example.domain.model.VideoStudioMode
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.AspectRatio
@@ -25,18 +27,26 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.coroutineContext
 import kotlin.random.Random
 
 private const val TAG = "FreeVideoGenerator"
+private const val AI_HORDE_API_BASE = "https://aihorde.net/api/v2"
+private const val AI_HORDE_ANON_KEY = "0000000000"
+private const val AI_HORDE_CLIENT_AGENT = "GodModeStudio:1.0:android"
 
 private data class PlannedShotList(
     val beats: List<String>,
@@ -46,9 +56,12 @@ private data class PlannedShotList(
 class FreeVideoGenerator(private val context: Context) {
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     private val shotSchema = Schema.obj(
         properties = mapOf(
@@ -63,8 +76,15 @@ class FreeVideoGenerator(private val context: Context) {
         )
     )
 
-    private val directorModel by lazy {
-        Firebase.ai.generativeModel(
+    private fun isFirebaseReady(): Boolean {
+        return runCatching {
+            if (FirebaseApp.getApps(context).isNotEmpty()) return true
+            FirebaseApp.initializeApp(context) != null
+        }.getOrDefault(false)
+    }
+
+    private fun buildDirectorModel(): GenerativeModel {
+        return Firebase.ai.generativeModel(
             modelName = "gemini-3.8-flash",
             generationConfig = generationConfig {
                 temperature = 0.65f
@@ -103,13 +123,20 @@ class FreeVideoGenerator(private val context: Context) {
         onProgress: suspend (VideoRenderProgress) -> Unit
     ): VideoClipRecord {
         val safeSec = durationSec.coerceIn(5, 15)
-        val totalBeats = when {
-            safeSec <= 7 -> 2
-            safeSec <= 11 -> 3
-            else -> 4
+        val firebaseAvailable = isFirebaseReady()
+
+        // Keep beat count responsive: 2-4 beats with Firebase AI, 2-3 beats on free community AI Horde cluster
+        val totalBeats = if (firebaseAvailable) {
+            when {
+                safeSec <= 7 -> 2
+                safeSec <= 11 -> 3
+                else -> 4
+            }
+        } else {
+            if (safeSec <= 10) 2 else 3
         }
 
-        // Step 1: AI Cinematography Director via built-in Firebase AI Logic (gemini-3.8-flash)
+        // Step 1: Shot Choreography (Firebase Gemini 3.8 Flash if initialized, else structured cinematic planner)
         onProgress(
             VideoRenderProgress(
                 stageTitle = "${model.displayName} · Directing",
@@ -124,7 +151,8 @@ class FreeVideoGenerator(private val context: Context) {
             model = model,
             ratio = ratio,
             beatCount = totalBeats,
-            anchorBitmap = anchorBitmap
+            anchorBitmap = anchorBitmap,
+            firebaseAvailable = firebaseAvailable
         )
 
         val effectiveMotion = if (cameraMotion == VideoCameraMotion.AUTO) {
@@ -133,8 +161,10 @@ class FreeVideoGenerator(private val context: Context) {
             cameraMotion
         }
 
-        // Step 2: Synthesize continuous AI keyframes using Built-in Firebase AI (Nano Banana 2.1 / Flash-Lite Image)
-        // with image-to-image chaining from previous frame for visual continuity
+        // Step 2: Synthesize continuous AI keyframes
+        // Tier 1: Firebase AI Logic (Nano Banana 2.1 / Flash-Lite Image) when Firebase is initialized
+        // Tier 2: Free keyless open-source AI Horde cluster (works on standalone APKs without Firebase!)
+        // Tier 3: Free keyless Pollinations fallback
         val keyframes = mutableListOf<Bitmap>()
         if (anchorBitmap != null) {
             keyframes.add(anchorBitmap.copy(Bitmap.Config.ARGB_8888, false))
@@ -150,16 +180,16 @@ class FreeVideoGenerator(private val context: Context) {
         var firstError: Exception? = null
 
         toGenerate.forEachIndexed { index, beatPrompt ->
-            val pct = 0.14f + (0.58f * (index.toFloat() / toGenerate.size.coerceAtLeast(1)))
+            val basePct = 0.14f + (0.58f * (index.toFloat() / toGenerate.size.coerceAtLeast(1)))
             onProgress(
                 VideoRenderProgress(
                     stageTitle = "Synthesizing Frame ${index + 1}/${toGenerate.size}",
                     detail = "${model.displayName} · ${ratio.label} (${if (keyframes.isNotEmpty()) "Continuing previous frame" else "Opening shot"})…",
-                    progress = pct
+                    progress = basePct
                 )
             )
 
-            val styledPrompt = "$beatPrompt. Style: ${model.styleDirective}. No text overlays or watermarks."
+            val styledPrompt = "$beatPrompt, ${model.styleDirective}, cinematic film still, sharp focus, no watermark"
             val previousFrame = keyframes.lastOrNull()
 
             try {
@@ -168,21 +198,29 @@ class FreeVideoGenerator(private val context: Context) {
                     previousFrame = previousFrame,
                     model = model,
                     ratio = ratio,
-                    seed = baseSeed + index
+                    seed = baseSeed + index,
+                    firebaseAvailable = firebaseAvailable,
+                    onStatus = { statusText ->
+                        onProgress(
+                            VideoRenderProgress(
+                                stageTitle = "Synthesizing Frame ${index + 1}/${toGenerate.size}",
+                                detail = statusText,
+                                progress = (basePct + 0.08f).coerceAtMost(0.72f)
+                            )
+                        )
+                    }
                 )
                 keyframes.add(bmp)
-                if (index < toGenerate.lastIndex) delay(400)
+                if (index < toGenerate.lastIndex) delay(350)
             } catch (e: CancellationException) {
                 keyframes.forEach { if (!it.isRecycled) it.recycle() }
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Frame ${index + 1} synthesis failed", e)
                 if (firstError == null) firstError = e
-                // If we already have at least one real frame (e.g., anchor image or Frame 1), continue encoding
-                // what we successfully generated rather than failing the whole render.
                 if (keyframes.isEmpty()) {
                     throw RuntimeException(
-                        e.localizedMessage ?: "AI video frame generation failed. Please check your connection and try again.",
+                        e.localizedMessage ?: "AI video frame generation failed. Please check your internet connection and retry.",
                         e
                     )
                 }
@@ -301,35 +339,57 @@ class FreeVideoGenerator(private val context: Context) {
         previousFrame: Bitmap?,
         model: FreeVideoModel,
         ratio: VideoRatio,
-        seed: Int
+        seed: Int,
+        firebaseAvailable: Boolean,
+        onStatus: suspend (String) -> Unit
     ): Bitmap {
         val errors = mutableListOf<String>()
 
-        // 1. Primary built-in Firebase AI Logic image model (Nano Banana 2.1 or Flash-Lite Image)
-        val candidates = listOf(model.primaryImageModel, model.fallbackImageModel).distinct()
-        for (modelName in candidates) {
-            try {
-                val bmp = generateViaFirebaseAi(
-                    modelName = modelName,
-                    prompt = prompt,
-                    previousFrame = previousFrame,
-                    ratio = ratio
-                )
-                if (bmp != null) return bmp
-                errors.add("$modelName returned no image")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: TimeoutCancellationException) {
-                Log.w(TAG, "$modelName timed out", e)
-                errors.add("$modelName timed out")
-            } catch (e: Exception) {
-                Log.w(TAG, "$modelName failed: ${e.message}", e)
-                errors.add("$modelName: ${e.localizedMessage ?: e.javaClass.simpleName}")
+        // Tier 1: Built-in Firebase AI Logic image synthesis (only if FirebaseApp is initialized)
+        if (firebaseAvailable) {
+            val candidates = listOf(model.primaryImageModel, model.fallbackImageModel).distinct()
+            for (modelName in candidates) {
+                try {
+                    onStatus("Built-in Gemini ($modelName) generating frame…")
+                    val bmp = generateViaFirebaseAi(
+                        modelName = modelName,
+                        prompt = prompt,
+                        previousFrame = previousFrame,
+                        ratio = ratio
+                    )
+                    if (bmp != null) return bmp
+                    errors.add("$modelName returned empty image")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: TimeoutCancellationException) {
+                    Log.w(TAG, "$modelName timed out", e)
+                    errors.add("$modelName timed out")
+                } catch (e: Exception) {
+                    Log.w(TAG, "$modelName failed: ${e.message}", e)
+                    errors.add("$modelName failed")
+                }
             }
         }
 
-        // 2. Secondary open free fallback if Firebase image models are unavailable on the project's billing tier
+        // Tier 2: Free Open-Source AI Horde Cluster (100% keyless, works on standalone APKs everywhere!)
         try {
+            return generateViaAiHorde(
+                prompt = prompt,
+                previousFrame = previousFrame,
+                ratio = ratio,
+                seed = seed,
+                onStatus = onStatus
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "AI Horde failed: ${e.message}", e)
+            errors.add("Free AI Cluster: ${e.localizedMessage ?: "busy"}")
+        }
+
+        // Tier 3: Keyless Pollinations fallback
+        try {
+            onStatus("Trying backup open image renderer…")
             return fetchPollinationsFallback(
                 prompt = prompt,
                 width = ratio.width,
@@ -340,11 +400,11 @@ class FreeVideoGenerator(private val context: Context) {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "Pollinations fallback failed: ${e.message}", e)
-            errors.add("Open render fallback: ${e.localizedMessage ?: "unavailable"}")
+            errors.add("Backup renderer: ${e.localizedMessage ?: "unavailable"}")
         }
 
         throw RuntimeException(
-            "Video frame synthesis failed (${errors.firstOrNull() ?: "service unavailable"}). Please retry."
+            "Video frame synthesis failed (${errors.joinToString(" · ")}). Please check your internet connection and retry."
         )
     }
 
@@ -380,6 +440,183 @@ class FreeVideoGenerator(private val context: Context) {
             ?.firstOrNull()?.image
     }
 
+    /**
+     * 100% Free, keyless distributed open-source AI synthesis via AI Horde (aihorde.net).
+     * Uses anonymous free-tier compliant dimensions (576x320 for 16:9, 320x576 for 9:16; <= 512x512 pixels, 20 steps).
+     */
+    private suspend fun generateViaAiHorde(
+        prompt: String,
+        previousFrame: Bitmap?,
+        ratio: VideoRatio,
+        seed: Int,
+        onStatus: suspend (String) -> Unit
+    ): Bitmap {
+        val hordeW = if (ratio == VideoRatio.LANDSCAPE_16_9) 576 else 320
+        val hordeH = if (ratio == VideoRatio.LANDSCAPE_16_9) 320 else 576
+
+        onStatus("Free AI Cluster · Submitting job (${ratio.label})…")
+
+        // Try img2img when continuing from a previous frame; cleanly fall back to txt2img if rejected
+        val jobId = submitAiHordeJob(
+            prompt = prompt,
+            width = hordeW,
+            height = hordeH,
+            seed = seed,
+            previousFrame = previousFrame
+        )
+
+        // Poll lightweight check endpoint up to ~110s with cooperative cancellation
+        val maxPolls = 44
+        for (attempt in 1..maxPolls) {
+            coroutineContext.ensureActive()
+            delay(2_500L)
+
+            val checkJson = withContext(Dispatchers.IO) {
+                val req = Request.Builder()
+                    .url("$AI_HORDE_API_BASE/generate/check/$jobId")
+                    .header("Client-Agent", AI_HORDE_CLIENT_AGENT)
+                    .get()
+                    .build()
+                httpClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) throw RuntimeException("Status HTTP ${resp.code}")
+                    JSONObject(resp.body?.string().orEmpty())
+                }
+            }
+
+            if (checkJson.optBoolean("faulted", false)) {
+                throw RuntimeException("Worker faulted on this frame")
+            }
+            if (!checkJson.optBoolean("is_possible", true)) {
+                throw RuntimeException("No free worker available for these settings")
+            }
+            if (checkJson.optBoolean("done", false)) {
+                break
+            }
+
+            val waitSec = checkJson.optInt("wait_time", 0)
+            val queuePos = checkJson.optInt("queue_position", 0)
+            val msg = when {
+                checkJson.optInt("processing", 0) > 0 -> "Free AI Cluster · Rendering frame…"
+                waitSec > 0 -> "Free AI Cluster · Queue #$queuePos (~${waitSec}s)…"
+                else -> "Free AI Cluster · Waiting for worker…"
+            }
+            onStatus(msg)
+
+            if (attempt == maxPolls) {
+                throw RuntimeException("Free AI Cluster queue timed out")
+            }
+        }
+
+        // Fetch completed generation payload & decode image
+        onStatus("Free AI Cluster · Downloading generated frame…")
+        return withContext(Dispatchers.IO) {
+            val statusReq = Request.Builder()
+                .url("$AI_HORDE_API_BASE/generate/status/$jobId")
+                .header("Client-Agent", AI_HORDE_CLIENT_AGENT)
+                .get()
+                .build()
+            val imgField = httpClient.newCall(statusReq).execute().use { resp ->
+                if (!resp.isSuccessful) throw RuntimeException("Result HTTP ${resp.code}")
+                val json = JSONObject(resp.body?.string().orEmpty())
+                val gens = json.optJSONArray("generations")
+                if (gens == null || gens.length() == 0) {
+                    throw RuntimeException("No frame returned by worker")
+                }
+                gens.getJSONObject(0).optString("img", "")
+            }
+
+            if (imgField.isBlank()) throw RuntimeException("Empty frame image data")
+
+            val bytes = if (imgField.startsWith("http://") || imgField.startsWith("https://")) {
+                val imgReq = Request.Builder()
+                    .url(imgField)
+                    .header("User-Agent", "GodModeStudio/1.0 Android")
+                    .get()
+                    .build()
+                httpClient.newCall(imgReq).execute().use { r ->
+                    if (!r.isSuccessful) throw RuntimeException("Frame download HTTP ${r.code}")
+                    r.body?.bytes() ?: throw RuntimeException("Empty downloaded frame")
+                }
+            } else {
+                Base64.decode(imgField, Base64.DEFAULT)
+            }
+
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: throw RuntimeException("Could not decode generated frame")
+        }
+    }
+
+    private suspend fun submitAiHordeJob(
+        prompt: String,
+        width: Int,
+        height: Int,
+        seed: Int,
+        previousFrame: Bitmap?
+    ): String = withContext(Dispatchers.IO) {
+        fun buildBody(includeSource: Boolean): String {
+            val params = JSONObject().apply {
+                put("width", width)
+                put("height", height)
+                put("steps", 20)
+                put("cfg_scale", 7.0)
+                put("sampler_name", "k_euler_a")
+                put("seed", seed.toString())
+                put("n", 1)
+                if (includeSource && previousFrame != null) {
+                    put("denoising_strength", 0.55)
+                }
+            }
+            return JSONObject().apply {
+                put("prompt", prompt.take(450))
+                put("params", params)
+                put("nsfw", false)
+                put("censor_nsfw", true)
+                put("trusted_workers", false)
+                put("slow_workers", true)
+                put("r2", true)
+                if (includeSource && previousFrame != null) {
+                    val scaled = Bitmap.createScaledBitmap(previousFrame, width, height, true)
+                    val baos = ByteArrayOutputStream()
+                    scaled.compress(Bitmap.CompressFormat.JPEG, 82, baos)
+                    if (scaled !== previousFrame && !scaled.isRecycled) scaled.recycle()
+                    put("source_image", Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP))
+                    put("source_processing", "img2img")
+                }
+            }.toString()
+        }
+
+        fun post(bodyJson: String): Pair<Int, String> {
+            val req = Request.Builder()
+                .url("$AI_HORDE_API_BASE/generate/async")
+                .header("apikey", AI_HORDE_ANON_KEY)
+                .header("Client-Agent", AI_HORDE_CLIENT_AGENT)
+                .header("Content-Type", "application/json")
+                .post(bodyJson.toRequestBody(jsonMediaType))
+                .build()
+            httpClient.newCall(req).execute().use { resp ->
+                return resp.code to resp.body?.string().orEmpty()
+            }
+        }
+
+        // If img2img is rejected by anonymous limits, cleanly fall back to txt2img
+        var (code, text) = post(buildBody(includeSource = previousFrame != null))
+        if (code !in 200..299 && previousFrame != null) {
+            Log.w(TAG, "AI Horde img2img returned HTTP $code, retrying as txt2img")
+            val retry = post(buildBody(includeSource = false))
+            code = retry.first
+            text = retry.second
+        }
+
+        if (code !in 200..299) {
+            val detail = runCatching { JSONObject(text).optString("message") }.getOrNull()
+            throw RuntimeException("HTTP $code ${detail.orEmpty()}".trim())
+        }
+
+        val id = JSONObject(text).optString("id", "")
+        if (id.isBlank()) throw RuntimeException("Missing job id from AI Horde")
+        id
+    }
+
     private suspend fun fetchPollinationsFallback(
         prompt: String,
         width: Int,
@@ -412,8 +649,13 @@ class FreeVideoGenerator(private val context: Context) {
         model: FreeVideoModel,
         ratio: VideoRatio,
         beatCount: Int,
-        anchorBitmap: Bitmap?
+        anchorBitmap: Bitmap?,
+        firebaseAvailable: Boolean
     ): PlannedShotList {
+        if (!firebaseAvailable) {
+            return fallbackPlan(prompt, beatCount, mode)
+        }
+
         val instruction = when (mode) {
             VideoStudioMode.TEXT_TO_VIDEO ->
                 "Design $beatCount sequential cinematic keyframes for this video prompt: \"$prompt\"."
@@ -424,10 +666,11 @@ class FreeVideoGenerator(private val context: Context) {
         }
 
         return try {
+            val director = buildDirectorModel()
             val response = withTimeout(30_000L) {
                 val ref = anchorBitmap?.let { downscaleForPayload(it, 768) }
                 try {
-                    directorModel.generateContent(
+                    director.generateContent(
                         content {
                             if (ref != null) image(ref)
                             text(
@@ -458,22 +701,34 @@ class FreeVideoGenerator(private val context: Context) {
                     if (s.isNotBlank()) list.add(s)
                 }
             }
-            if (list.isEmpty()) fallbackPlan(prompt, beatCount) else PlannedShotList(list, motion)
+            if (list.isEmpty()) fallbackPlan(prompt, beatCount, mode) else PlannedShotList(list, motion)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "Director JSON fallback used", e)
-            fallbackPlan(prompt, beatCount)
+            fallbackPlan(prompt, beatCount, mode)
         }
     }
 
-    private fun fallbackPlan(prompt: String, count: Int): PlannedShotList {
-        val shots = listOf(
-            "Opening establishing cinematic shot of $prompt, crisp natural lighting, fluid motion",
-            "Mid-scene dynamic motion progression of $prompt, identical subject and color palette",
-            "Dramatic camera advance continuing $prompt, rich atmospheric depth and detail",
-            "Closing cinematic climax frame of $prompt, balanced composition"
-        )
+    private fun fallbackPlan(prompt: String, count: Int, mode: VideoStudioMode): PlannedShotList {
+        val shots = when (mode) {
+            VideoStudioMode.EXTEND_VIDEO -> listOf(
+                "Seamless next moment continuing $prompt, same subject and lighting, dynamic forward motion",
+                "Further progression of $prompt, rich cinematic depth and atmospheric movement",
+                "Grand cinematic continuation climax of $prompt, wide balanced framing"
+            )
+            VideoStudioMode.IMAGE_TO_VIDEO -> listOf(
+                "Smooth motion progression animating $prompt, preserving exact scene lighting and subject",
+                "Cinematic camera movement through $prompt, atmospheric depth and vivid detail",
+                "Closing expressive shot of $prompt, harmonious lighting"
+            )
+            VideoStudioMode.TEXT_TO_VIDEO -> listOf(
+                "Opening establishing cinematic shot of $prompt, crisp lighting, fluid composition",
+                "Mid-scene dynamic motion progression of $prompt, consistent subject and color palette",
+                "Dramatic camera advance continuing $prompt, rich atmospheric depth and detail",
+                "Closing cinematic climax frame of $prompt, balanced wide composition"
+            )
+        }
         return PlannedShotList(shots.take(count), VideoCameraMotion.ZOOM_IN)
     }
 
